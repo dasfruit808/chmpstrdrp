@@ -301,14 +301,36 @@ const CUSTOMIZATION_OPTIONS = {
     }
   }
 };
-class GlobalLeaderboard {
-  static async submitScore(name, score, level, combo) {
+let cachedStateClient = null;
+let stateClientInitPromise = null;
+let stateClientInitFailed = false;
+async function getStateClient() {
+  if (cachedStateClient) return cachedStateClient;
+  if (stateClientInitFailed) return null;
+  if (stateClientInitPromise) return stateClientInitPromise;
+  stateClientInitPromise = (async () => {
     try {
       const StateClient = (await import('@devfunlabs/state-client')).StateClient;
-      const client = new StateClient({
+      cachedStateClient = new StateClient({
         baseURL: 'https://state.dev.fun',
         appId: 'faa6ba68b43144a937f0'
       });
+      return cachedStateClient;
+    } catch (error) {
+      console.error('Failed to initialize StateClient:', error);
+      stateClientInitFailed = true;
+      return null;
+    } finally {
+      stateClientInitPromise = null;
+    }
+  })();
+  return stateClientInitPromise;
+}
+class GlobalLeaderboard {
+  static async submitScore(name, score, level, combo) {
+    try {
+      const client = await getStateClient();
+      if (!client) return false;
       const id = `score_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       await client.createEntity('leaderboard', {
         id,
@@ -326,11 +348,8 @@ class GlobalLeaderboard {
   }
   static async getTopScores(limit = 50) {
     try {
-      const StateClient = (await import('@devfunlabs/state-client')).StateClient;
-      const client = new StateClient({
-        baseURL: 'https://state.dev.fun',
-        appId: 'faa6ba68b43144a937f0'
-      });
+      const client = await getStateClient();
+      if (!client) return [];
       const scores = await client.getEntities('leaderboard');
       return scores.sort((a, b) => b.score - a.score).slice(0, limit).map(entry => ({
         name: entry.name,
