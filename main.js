@@ -1,5 +1,7 @@
 // Import Phaser directly from a CDN so the game can run without a bundler or local node_modules
-import Phaser from "https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.esm.js";
+// The ESM build on the CDN exposes named exports instead of a default export, so we import
+// the full namespace to mirror the usual `Phaser` global bundle behavior.
+import * as Phaser from "https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.esm.js";
 class PerformanceManager {
   constructor(scene) {
     this.scene = scene;
