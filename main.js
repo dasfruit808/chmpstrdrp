@@ -63,14 +63,20 @@ class PerformanceManager {
   }
 }
 class ObjectPool {
-  constructor(scene, createFunc, resetFunc, initialSize = 10) {
+  constructor(scene, createFunc, resetFunc, initialSize = 10, maxCapacity, key) {
     this.scene = scene;
     this.createFunc = createFunc;
     this.resetFunc = resetFunc;
     this.pool = [];
     this.active = [];
-    for (let i = 0; i < initialSize; i++) {
-      const obj = this.createFunc();
+    this.key = key;
+    this.totalCreated = 0;
+    this.lastWarningTime = 0;
+    this.warningInterval = 2000;
+    this.maxCapacity = typeof maxCapacity === 'number' ? maxCapacity : initialSize * 2;
+    const initialCount = Math.min(initialSize, this.maxCapacity);
+    for (let i = 0; i < initialCount; i++) {
+      const obj = this.createManagedObject();
       obj.setActive(false);
       obj.setVisible(false);
       this.pool.push(obj);
@@ -80,8 +86,15 @@ class ObjectPool {
     let obj;
     if (this.pool.length > 0) {
       obj = this.pool.pop();
+    } else if (this.hasCapacityAvailable()) {
+      obj = this.createManagedObject();
     } else {
-      obj = this.createFunc();
+      obj = this.recycleOldest();
+      this.reportCapacityWarning('Pool at capacity; recycling oldest object.');
+    }
+    if (!obj) {
+      obj = this.createManagedObject();
+      this.reportCapacityWarning('Pool exceeded capacity; allocating additional object.');
     }
     obj.setActive(true);
     obj.setVisible(true);
@@ -107,6 +120,45 @@ class ObjectPool {
     });
     this.active = [];
     this.pool = [];
+    this.totalCreated = 0;
+  }
+  recycleOldest() {
+    const oldest = this.active.shift();
+    if (!oldest) return null;
+    oldest.setActive(false);
+    oldest.setVisible(false);
+    this.resetFunc(oldest);
+    return oldest;
+  }
+  hasCapacityAvailable() {
+    return this.active.length + this.pool.length < this.maxCapacity;
+  }
+  createManagedObject() {
+    const obj = this.createFunc();
+    this.totalCreated++;
+    return obj;
+  }
+  reportCapacityWarning(message) {
+    const now = Date.now();
+    if (now - this.lastWarningTime < this.warningInterval) return;
+    this.lastWarningTime = now;
+    const details = `${message} (key: ${this.key || 'unknown'}, active: ${this.active.length}, pooled: ${this.pool.length}, created: ${this.totalCreated}, max: ${this.maxCapacity}).`;
+    if (this.scene?.events) {
+      this.scene.events.emit('pool-warning', {
+        key: this.key,
+        message: details,
+        metrics: this.getMetrics()
+      });
+    }
+    console.warn(details);
+  }
+  getMetrics() {
+    return {
+      created: this.totalCreated,
+      active: this.active.length,
+      pooled: this.pool.length,
+      max: this.maxCapacity
+    };
   }
 }
 const STORAGE_KEYS = {
@@ -722,8 +774,8 @@ class BaseScene extends Phaser.Scene {
       this.textureManager.setQualitySettings(settings);
     }
   }
-  createOptimizedPool(key, createFunc, resetFunc, initialSize = 10) {
-    const pool = new ObjectPool(this, createFunc, resetFunc, initialSize);
+  createOptimizedPool(key, createFunc, resetFunc, initialSize = 10, maxCapacity) {
+    const pool = new ObjectPool(this, createFunc, resetFunc, initialSize, maxCapacity, key);
     this.objectPools.set(key, pool);
     return pool;
   }
